@@ -295,43 +295,47 @@ def get_historical_1m_data1(symbol: str, limit: int = 288):
 
 def get_historical_1m_data(symbol: str, limit: int = 288):
     """
-    Fetches historical 5-minute candlestick data from CoinGecko.
-    
+    Fetches historical 5-minute candlestick data from CoinGecko with rate limiting.
+
     Parameters:
-        symbol (str): Cryptocurrency ticker (e.g., "bitcoin").
+        symbol (str): Cryptocurrency ID (e.g., "bitcoin").
         limit (int): Number of data points (default = 288, representing 24 hours).
-    
+
     Returns:
         pd.DataFrame: DataFrame with timestamp and close price.
     """
     url = f"https://api.coingecko.com/api/v3/coins/{symbol}/market_chart"
     params = {
         "vs_currency": "usd",
-        "days": "1",  # 1 day of data
-        "interval": "5m"  # 5-minute interval
+        "days": "1",
+        "interval": "5m"
     }
-    
-    response = requests.get(url, params=params)
 
-    if response.status_code != 200:
-        print(f"❌ Erreur API CoinGecko: {response.status_code} - {response.text}")
-        return pd.DataFrame()  # Return empty DataFrame on failure
-    
+    retries = 3  # Retry up to 3 times if rate-limited
+    for attempt in range(retries):
+        response = requests.get(url, params=params)
+
+        if response.status_code == 200:
+            break  # Success, exit loop
+        elif response.status_code == 429:
+            print(f"⚠️ Rate limit exceeded (Attempt {attempt+1}/{retries}). Waiting before retry...")
+            time.sleep(15)  # Wait before retrying
+        else:
+            print(f"❌ Error API CoinGecko: {response.status_code} - {response.text}")
+            return pd.DataFrame()  # Return empty DataFrame on failure
+
     data = response.json().get("prices", [])
-    
+
     if not data:
         print("⚠️ No data received from CoinGecko.")
         return pd.DataFrame()
 
-    # Convert response to DataFrame
     df = pd.DataFrame(data, columns=["timestamp", "close"])
-    
-    # Convert timestamp to datetime
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     df.set_index("timestamp", inplace=True)
-    
-    # Limit rows to requested amount
+
     return df.tail(limit)
+
 
 
 def get_prices_df(token_pool):
