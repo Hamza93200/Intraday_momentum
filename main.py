@@ -265,6 +265,13 @@ def place_order(
 
 
 def get_historical_1m_data(symbol: str, limit: int = 288):
+    PROXY_HOST = "50.169.222.241"
+    PROXY_PORT = "80"
+
+    PROXIES = {
+        "http": f"http://{PROXY_HOST}:{PROXY_PORT}",
+        "https": f"http://{PROXY_HOST}:{PROXY_PORT}",
+    }
 
     url = "https://api.binance.com/api/v3/klines"
     params = {
@@ -273,7 +280,7 @@ def get_historical_1m_data(symbol: str, limit: int = 288):
         "limit": limit  # 288 * 5m = 1440m (24h)
     }
     
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params,proxies=PROXIES)
     if response.status_code != 200:
         print(f"❌ Erreur API Binance: {response.status_code} - {response.text}")
         return []
