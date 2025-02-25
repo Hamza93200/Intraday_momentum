@@ -65,11 +65,11 @@ def close_positions(product_type="USDT-FUTURES"):
 
 
 #def generate_signature(timestamp, method, request_path, body=""):
-    message = f"{timestamp}{method}{request_path}{body}"
-    signature = hmac.new(
-        SECRET_KEY.encode(), message.encode(), hashlib.sha256
-    ).digest()
-    return base64.b64encode(signature).decode()
+    #message = f"{timestamp}{method}{request_path}{body}"
+    #signature = hmac.new(
+        #SECRET_KEY.encode(), message.encode(), hashlib.sha256
+    #).digest()
+    #return base64.b64encode(signature).decode()
 
 
 def get_crypto_balance():
@@ -274,6 +274,10 @@ def get_historical_1m_data(symbol: str, limit: int = 288):
     }
     
     response = requests.get(url, params=params)
+    if response.status_code != 200:
+        print(f"❌ Erreur API Binance: {response.status_code} - {response.text}")
+        return []
+    
     data = response.json()
     
     # Extract relevant data (timestamp, close price)
