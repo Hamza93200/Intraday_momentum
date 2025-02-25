@@ -7,7 +7,6 @@ import base64
 import numpy as np
 import json
 import requests
-import schedule
 import time
 
 
