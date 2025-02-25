@@ -264,14 +264,7 @@ def place_order(
 
 
 
-def get_historical_1m_data(symbol: str, limit: int = 288):
-    PROXY_HOST = "50.169.222.241"
-    PROXY_PORT = "80"
-
-    PROXIES = {
-        "http": f"http://{PROXY_HOST}:{PROXY_PORT}",
-        "https": f"http://{PROXY_HOST}:{PROXY_PORT}",
-    }
+def get_historical_1m_data1(symbol: str, limit: int = 288):
 
     url = "https://api.binance.com/api/v3/klines"
     params = {
@@ -280,7 +273,7 @@ def get_historical_1m_data(symbol: str, limit: int = 288):
         "limit": limit  # 288 * 5m = 1440m (24h)
     }
     
-    response = requests.get(url, params=params,proxies=PROXIES)
+    response = requests.get(url, params=params)
     if response.status_code != 200:
         print(f"❌ Erreur API Binance: {response.status_code} - {response.text}")
         return []
@@ -298,6 +291,48 @@ def get_historical_1m_data(symbol: str, limit: int = 288):
     df.set_index("timestamp", inplace=True)
     
     return df
+
+
+def get_historical_1m_data(symbol: str, limit: int = 288):
+    """
+    Fetches historical 5-minute candlestick data from CoinGecko.
+    
+    Parameters:
+        symbol (str): Cryptocurrency ticker (e.g., "bitcoin").
+        limit (int): Number of data points (default = 288, representing 24 hours).
+    
+    Returns:
+        pd.DataFrame: DataFrame with timestamp and close price.
+    """
+    url = f"https://api.coingecko.com/api/v3/coins/{symbol}/market_chart"
+    params = {
+        "vs_currency": "usd",
+        "days": "1",  # 1 day of data
+        "interval": "5m"  # 5-minute interval
+    }
+    
+    response = requests.get(url, params=params)
+
+    if response.status_code != 200:
+        print(f"❌ Erreur API CoinGecko: {response.status_code} - {response.text}")
+        return pd.DataFrame()  # Return empty DataFrame on failure
+    
+    data = response.json().get("prices", [])
+    
+    if not data:
+        print("⚠️ No data received from CoinGecko.")
+        return pd.DataFrame()
+
+    # Convert response to DataFrame
+    df = pd.DataFrame(data, columns=["timestamp", "close"])
+    
+    # Convert timestamp to datetime
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df.set_index("timestamp", inplace=True)
+    
+    # Limit rows to requested amount
+    return df.tail(limit)
+
 
 def get_prices_df(token_pool):
     df_combined = None
@@ -348,3 +383,4 @@ token_pool = ['BTC', 'ETH', 'SOL', 'XRP', 'LTC', 'DOGE',
 
 
 df_prices = get_prices_df(token_pool)
+print(df_prices)
