@@ -1,3 +1,159 @@
+Sub ComputeSpotReturns()
+
+    Dim wsSrc As Worksheet
+    Dim wsDst As Worksheet
+    Dim lastRow As Long, lastCol As Long
+    Dim colIndex As Long, i As Long
+    Dim headers() As String
+    Dim dates() As Variant
+    Dim data() As Variant
+    Dim currencies() As String
+    Dim currencyCount As Long
+    
+    Set wsSrc = ThisWorkbook.Sheets("Spot")
+    
+    ' Prepare Returns sheet
+    On Error Resume Next
+    Set wsDst = ThisWorkbook.Sheets("Returns")
+    If wsDst Is Nothing Then
+        Set wsDst = ThisWorkbook.Sheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        wsDst.Name = "Returns"
+    Else
+        wsDst.Cells.Clear
+    End If
+    On Error GoTo 0
+    
+    ' Identify data range
+    lastRow = wsSrc.Cells(wsSrc.Rows.Count, 1).End(xlUp).Row
+    lastCol = wsSrc.Cells(1, wsSrc.Columns.Count).End(xlToLeft).Column
+    
+    ' Read headers
+    ReDim headers(1 To lastCol)
+    For i = 1 To lastCol
+        headers(i) = wsSrc.Cells(1, i).Value
+    Next i
+    
+    ' Get date range
+    dates = wsSrc.Range(wsSrc.Cells(2, 1), wsSrc.Cells(lastRow, 1)).Value
+
+    ' Identify currency columns (skip column 1 = DATES)
+    currencyCount = 0
+    ReDim currencies(1 To lastCol - 1)
+    For colIndex = 2 To lastCol
+        If InStr(headers(colIndex), "Curncy") > 0 Then
+            currencyCount = currencyCount + 1
+            currencies(currencyCount) = headers(colIndex)
+        End If
+    Next colIndex
+    ReDim Preserve currencies(1 To currencyCount)
+
+    ' Define maturity buckets
+    Dim maturities As Variant
+    maturities = Array("Daily", "Weekly", "Monthly", "Quarterly")
+
+    ' Initialize write row
+    Dim writeRow As Long: writeRow = 1
+    wsDst.Cells(writeRow, 1).Value = "PeriodStart"
+
+    ' Write headers dynamically
+    Dim m As Variant, c As Variant
+    Dim colOffset As Long: colOffset = 2
+
+    For Each m In maturities
+        For Each c In currencies
+            Dim cleanName As String
+            cleanName = Replace(c, " Curncy", "")
+            wsDst.Cells(writeRow, colOffset).Value = m & "_abs_diff_" & cleanName
+            wsDst.Cells(writeRow, colOffset + 1).Value = m & "_rel_diff_" & cleanName
+            colOffset = colOffset + 2
+        Next c
+    Next m
+
+    ' Now compute grouped returns
+    Dim dateDict As Object
+    Set dateDict = CreateObject("Scripting.Dictionary")
+
+    ' Read all data into memory
+    ReDim data(1 To lastRow - 1, 1 To lastCol)
+    For i = 2 To lastRow
+        For colIndex = 1 To lastCol
+            data(i - 1, colIndex) = wsSrc.Cells(i, colIndex).Value
+        Next colIndex
+    Next i
+
+    ' Loop over maturities
+    writeRow = 2
+
+    For Each m In maturities
+        dateDict.RemoveAll
+        Dim formatKey As String
+
+        For i = 1 To UBound(data)
+            Dim dt As Date: dt = data(i, 1)
+
+            Select Case m
+                Case "Daily": formatKey = Format(dt, "yyyy-mm-dd")
+                Case "Weekly": formatKey = Format(dt, "yyyy") & "-" & Format(dt, "ww", vbMonday)
+                Case "Monthly": formatKey = Format(dt, "yyyy-mm")
+                Case "Quarterly": formatKey = Format(dt, "yyyy") & "-Q" & Int((Month(dt) - 1) / 3) + 1
+            End Select
+
+            If Not dateDict.exists(formatKey) Then
+                dateDict.Add formatKey, Array(i, i) ' [start index, end index]
+            Else
+                dateDict(formatKey)(1) = i ' update end index
+            End If
+        Next i
+
+        ' Write values for each group
+        Dim groupKey As Variant
+        Dim wCol As Long: wCol = 2 + (Application.Match(m & "_abs_diff_" & Replace(currencies(1), " Curncy", ""), wsDst.Rows(1), 0) - 1)
+
+        For Each groupKey In dateDict.Keys
+            Dim idxStart As Long, idxEnd As Long
+            idxStart = dateDict(groupKey)(0)
+            idxEnd = dateDict(groupKey)(1)
+
+            ' Write period start date
+            wsDst.Cells(writeRow, 1).Value = data(idxStart, 1)
+
+            For c = 1 To currencyCount
+                Dim colNum As Long
+                colNum = Application.Match(currencies(c), headers, 0)
+
+                Dim vStart As Variant, vEnd As Variant
+                vStart = data(idxStart, colNum)
+                vEnd = data(idxEnd, colNum)
+
+                If IsNumeric(vStart) And IsNumeric(vEnd) And vStart <> 0 Then
+                    Dim absDiff As Double, relDiff As Double
+                    absDiff = Abs(vEnd - vStart)
+                    relDiff = absDiff / vStart
+
+                    wsDst.Cells(writeRow, wCol).Value = absDiff
+                    wsDst.Cells(writeRow, wCol + 1).Value = relDiff
+                Else
+                    wsDst.Cells(writeRow, wCol).Value = ""
+                    wsDst.Cells(writeRow, wCol + 1).Value = ""
+                End If
+
+                wCol = wCol + 2
+            Next c
+
+            writeRow = writeRow + 1
+            wCol = 2 + (Application.Match(m & "_abs_diff_" & Replace(currencies(1), " Curncy", ""), wsDst.Rows(1), 0) - 1)
+        Next groupKey
+    Next m
+
+    MsgBox "Returns computation complete!", vbInformation
+
+End Sub
+
+
+
+
+
+
 
 from datetime import datetime, timedelta
 import pandas as pd
