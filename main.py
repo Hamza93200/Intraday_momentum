@@ -1,3 +1,53 @@
+
+import pandas as pd
+import statsmodels.api as sm
+import matplotlib.pyplot as plt
+
+# --- INPUT: y = spread, X = tariff time series ---
+# y and X are both pandas Series with daily datetime index
+# Example placeholders:
+# y = pd.Series(..., name="spread")
+# X = pd.Series(..., name="tariffs")
+
+# --- Step 1: Define tariff-relevant periods (e.g. Taiwan tariffs) ---
+relevant_periods = (
+    ((X.index >= "2019-01-01") & (X.index <= "2022-12-31")) |
+    ((X.index >= "2025-01-01") & (X.index <= "2025-12-31"))
+)
+
+# --- Step 2: Filter data to tariff-relevant periods only ---
+X_relevant = X[relevant_periods]
+y_relevant = y[relevant_periods]
+
+# --- Step 3: Align and drop missing values ---
+df = pd.concat([y_relevant, X_relevant], axis=1).dropna()
+df.columns = ['spread', 'tariffs']
+
+# --- Step 4: Run regression ---
+X_reg = sm.add_constant(df['tariffs'])  # add intercept
+model = sm.OLS(df['spread'], X_reg)
+results = model.fit()
+
+# --- Step 5: Output summary ---
+print(results.summary())
+
+# --- Step 6: Optional plot ---
+plt.figure(figsize=(10, 5))
+plt.plot(df.index, df['spread'], label='Actual Spread', color='black', linewidth=1)
+plt.plot(df.index, results.fittedvalues, label='Fitted Spread', color='blue', linestyle='--')
+plt.title('Fitted vs Actual Spread during Tariff-Relevant Periods')
+plt.xlabel('Date')
+plt.ylabel('Spread')
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+
+
+
+
+
+
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
