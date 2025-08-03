@@ -1,5 +1,202 @@
 
 import pandas as pd
+import numpy as np
+from datetime import timedelta
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import classification_report, roc_auc_score
+
+# --------- Utilities ---------
+def is_quarter_end(dt_index):
+    quarters = pd.date_range(start=dt_index.min(), end=dt_index.max(), freq='Q')
+    return dt_index.normalize().isin(quarters.normalize()).astype(int)
+
+def rolling_vol(series, window=5):
+    return series.rolling(window).std()
+
+# --------- Analysis pipeline ---------
+def compute_basic_stats(daily):
+    df = daily.copy()
+    df['quarter_end'] = is_quarter_end(df.index)
+    # Global correlation
+    corr_global = df['EURUSD_ret'].corr(df['SPX_ret'])
+    # Correlation conditional
+    corr_qe = df.loc[df['quarter_end'] == 1, 'EURUSD_ret'].corr(df.loc[df['quarter_end'] == 1, 'SPX_ret'])
+    corr_non_qe = df.loc[df['quarter_end'] == 0, 'EURUSD_ret'].corr(df.loc[df['quarter_end'] == 0, 'SPX_ret'])
+    return df, corr_global, corr_qe, corr_non_qe
+
+def plot_correlation_scatter(df):
+    plt.figure()
+    plt.scatter(df['SPX_ret'], df['EURUSD_ret'], alpha=0.6)
+    plt.xlabel("SPX return (16:00→20:59)")
+    plt.ylabel("EURUSD return (16:00→20:59)")
+    plt.title("Scatter: SPX vs EURUSD returns")
+    plt.grid(True)
+    plt.tight_layout()
+
+def plot_distributions(df):
+    # joint conditional on sign of SPX
+    plt.figure()
+    df_pos = df[df['SPX_ret'] > 0]
+    df_neg = df[df['SPX_ret'] < 0]
+    plt.hist(df_pos['EURUSD_ret'], bins=50, alpha=0.5, label='SPX > 0')
+    plt.hist(df_neg['EURUSD_ret'], bins=50, alpha=0.5, label='SPX < 0')
+    plt.legend()
+    plt.xlabel("EURUSD return")
+    plt.title("EURUSD return distribution conditional on SPX sign")
+    plt.grid(True)
+    plt.tight_layout()
+
+def regression_linear(df):
+    # EURUSD_ret ~ SPX_ret + quarter_end
+    X = pd.DataFrame({
+        'SPX_ret': df['SPX_ret'],
+        'quarter_end': is_quarter_end(df.index)
+    })
+    X = sm.add_constant(X)
+    y = df['EURUSD_ret']
+    model = sm.OLS(y, X).fit()
+    print("=== Linear regression EURUSD_ret ~ SPX_ret + quarter_end ===")
+    print(model.summary())
+    return model
+
+def logistic_directional(df):
+    # target: EURUSD up or down
+    df = df.copy()
+    df['fx_up'] = (df['EURUSD_ret'] > 0).astype(int)
+    df['quarter_end'] = is_quarter_end(df.index)
+    # features: SPX_ret, quarter_end, recent vol of EURUSD
+    df['vol_fx_5d'] = rolling_vol(df['EURUSD_ret'], window=5)
+    feat = df[['SPX_ret', 'quarter_end', 'vol_fx_5d']].dropna()
+    label = df.loc[feat.index, 'fx_up']
+    X = feat.values
+    scaler = StandardScaler()
+    Xs = scaler.fit_transform(X)
+    tscv = TimeSeriesSplit(n_splits=5)
+    all_true, all_pred_prob = [], []
+    for train_idx, test_idx in tscv.split(Xs):
+        X_train, X_test = Xs[train_idx], Xs[test_idx]
+        y_train, y_test = label.iloc[train_idx], label.iloc[test_idx]
+        clf = LogisticRegression()
+        clf.fit(X_train, y_train)
+        proba = clf.predict_proba(X_test)[:, 1]
+        all_true.append(y_test.values)
+        all_pred_prob.append(proba)
+    y_true = np.concatenate(all_true)
+    y_prob = np.concatenate(all_pred_prob)
+    y_pred_label = (y_prob > 0.5).astype(int)
+    auc = roc_auc_score(y_true, y_prob)
+    print(f"=== Logistic direction model (EURUSD up) ===\nROC AUC: {auc:.3f}")
+    print(classification_report(y_true, y_pred_label))
+    return clf, scaler, auc
+
+def event_study_quarter_ends(df, window=5):
+    df = df.copy()
+    df['quarter_end'] = is_quarter_end(df.index)
+    fx_col = 'EURUSD_ret'
+    eq_col = 'SPX_ret'
+    events = df[df['quarter_end'] == 1].index
+    paths_fx = []
+    paths_eq = []
+    for ev in events:
+        start = ev - pd.Timedelta(days=window)
+        end = ev + pd.Timedelta(days=window)
+        seg = df.loc[start:end, [fx_col, eq_col]].copy()
+        if len(seg) < (2 * window + 1):
+            continue
+        seg = seg.reset_index()
+        seg['day_offset'] = (seg['index'] - ev).days
+        seg = seg.set_index('day_offset')
+        paths_fx.append(seg[fx_col])
+        paths_eq.append(seg[eq_col])
+    if not paths_fx:
+        print("No full quarter-end events in window.")
+        return None
+    mean_fx = pd.concat(paths_fx, axis=1).mean(axis=1)
+    mean_eq = pd.concat(paths_eq, axis=1).mean(axis=1)
+    summary = pd.DataFrame({fx_col: mean_fx, eq_col: mean_eq})
+    # plot
+    plt.figure()
+    summary.plot(marker='o')
+    plt.title(f"Event study around quarter ends (±{window} days)")
+    plt.xlabel("Day offset from quarter-end")
+    plt.ylabel("Average return")
+    plt.grid(True)
+    plt.tight_layout()
+    return summary
+
+def simulate_hedge(df):
+    """
+    Hedge naïf : on fixe le rate EURUSD à 16h (ici on assume return measure implies price change)
+    Simuler PnL d'un hedge spot simple et comparer à exposition non-hedgée.
+    On suppose une exposition de 1 unit USD à vendre à 21h : si EURUSD baisse, perte si non couvert.
+    Hedge naive = short EURUSD à 16h, realized à 21h.
+    """
+    df = df.copy()
+    # PnL non-hedged en EUR d'une vente de 1 USD à 21h : si EURUSD_ret = (P21/P16)-1, 
+    # alors taux passe de S16 à S21, et vendre USD à 21h convertit via S21.
+    # Hedge spot à 16h fixe le taux S16, donc perte = différence entre S21 et S16.
+    # On mesure en PnL relatif: hedge error = (1 / (1 + EURUSD_ret)) - 1 approximé par -EURUSD_ret
+    df['hedge_error'] = -df['EURUSD_ret']  # simplification
+    df['abs_error'] = df['hedge_error'].abs()
+    # Performance summary
+    print("=== Hedge naïf summary ===")
+    print("Mean error:", df['hedge_error'].mean())
+    print("Std error:", df['hedge_error'].std())
+    # Conditional on quarter-end
+    df['quarter_end'] = is_quarter_end(df.index)
+    print("Mean error on quarter-end days:", df.loc[df['quarter_end'] == 1, 'hedge_error'].mean())
+    print("Mean error off quarter-end:", df.loc[df['quarter_end'] == 0, 'hedge_error'].mean())
+
+    # Plot distribution
+    plt.figure()
+    plt.hist(df['hedge_error'], bins=50)
+    plt.title("Distribution du hedge error (naïf) EURUSD")
+    plt.xlabel("Error")
+    plt.ylabel("Frequency")
+    plt.grid(True)
+    plt.tight_layout()
+    return df
+
+def summary_plots(df, corr_global, corr_qe, corr_non_qe):
+    # correlation bar
+    plt.figure()
+    labels = ['Global', 'Quarter-end', 'Non-quarter-end']
+    values = [corr_global, corr_qe, corr_non_qe]
+    plt.bar(labels, values)
+    plt.ylabel("Corr(EURUSD, SPX)")
+    plt.title("Correlation comparison")
+    plt.grid(True, axis='y')
+    plt.tight_layout()
+
+# --------- Entrée : ton DataFrame daily ---------
+# Supposons que tu as déjà un DataFrame `daily` avec columns ['EURUSD_ret', 'SPX_ret']
+# Exemple d'appel :
+# daily = pd.read_csv("tes_returns.csv", parse_dates=True, index_col=0)
+# daily, corr_global, corr_qe, corr_non_qe = compute_basic_stats(daily)
+# plot_correlation_scatter(daily)
+# plot_distributions(daily)
+# summary_plots(daily, corr_global, corr_qe, corr_non_qe)
+# lin_model = regression_linear(daily)
+# log_model, scaler, auc = logistic_directional(daily)
+# es_summary = event_study_quarter_ends(daily, window=3)
+# hedge_df = simulate_hedge(daily)
+# plt.show()
+
+# --------- Optionnel : sauvegarde des résultats ---------
+# es_summary.to_csv("event_study_qe.csv")
+# hedge_df.to_csv("hedge_simulation.csv")
+
+
+
+
+
+
+
+import pandas as pd
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
 
