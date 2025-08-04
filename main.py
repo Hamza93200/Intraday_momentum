@@ -1,6 +1,119 @@
 
 import pandas as pd
 import numpy as np
+from typing import List, Union
+from datetime import datetime
+from xbbg import blp  # suppose xbbg est installé et configuré
+
+def get_fx_spot_rates(currencies: List[str],
+                      asof_date: Union[str, datetime],
+                      multipliers_df: pd.DataFrame,
+                      ref_currency: str = "USD") -> List[float]:
+    """
+    Récupère pour chaque currency de la liste son spot contre ref_currency à la date donnée,
+    applique le multiplicateur via merge, et retourne la liste des rates ajustés (dans l'ordre),
+    sans les noms.
+
+    Params:
+        currencies: ex ["EUR", "KWD", ...]
+        asof_date: "YYYY-MM-DD" ou datetime
+        multipliers_df: DataFrame contenant soit :
+            - format long : colonnes ["currency", "multiplier"]
+            - format wide : colonnes par devise (ex "KWD", "EUR") avec une ligne de multiplicateurs
+        ref_currency: devise de référence, default "USD"
+    Returns:
+        List[float]: spot rates ajustés (avec multiplicateur) dans l’ordre de `currencies`.
+                     Si une devise manque, np.nan est placé.
+    """
+    # Normaliser date
+    if isinstance(asof_date, datetime):
+        date_str = asof_date.strftime("%Y-%m-%d")
+    else:
+        # on suppose une string ISO-like
+        # parfois xbbg accepte "YYYY-MM-DD"
+        date_str = pd.to_datetime(asof_date).strftime("%Y-%m-%d")
+
+    # Préparer dataframe de devises
+    df = pd.DataFrame({"currency": currencies})
+
+    # Préparer les multiplicateurs : transformer wide -> long si nécessaire
+    if set(multipliers_df.columns) >= {"currency", "multiplier"}:
+        mult_long = multipliers_df[["currency", "multiplier"]].copy()
+    else:
+        # wide format : une ligne attendue, colonnes = codes devises
+        # on melt pour obtenir long
+        try:
+            mult_long = multipliers_df.reset_index(drop=True).melt(var_name="currency", value_name="multiplier")
+        except Exception:
+            raise ValueError("multipliers_df format non reconnu. Il doit être either long (currency/multiplier) or wide (one row, columns=currencies).")
+
+    # Merge multiplicateur dans l'ordre des currencies
+    df = df.merge(mult_long, on="currency", how="left")
+    df["multiplier"] = df["multiplier"].fillna(1.0).astype(float)
+
+    # Construire tickers (ex: "EURUSD Curncy")
+    df["ticker"] = df["currency"] + ref_currency + " Curncy"
+
+    # Appel BDH : tentative groupée
+    tickers = df["ticker"].tolist()
+    try:
+        raw = blp.bdh(tickers, flds=["PX_LAST"], start_date=date_str, end_date=date_str)
+    except Exception:
+        raw = pd.DataFrame()
+
+    spots = []
+    for idx, row in df.iterrows():
+        ticker = row["ticker"]
+        spot = None
+        # Essayer de prendre dans bdh
+        try:
+            if not raw.empty:
+                # xbbg bdh retourne colonnes simples si 1 field: (ticker,) or (ticker, field) depending version
+                if (ticker, "PX_LAST") in raw.columns:
+                    series = raw[(ticker, "PX_LAST")]
+                elif ticker in raw.columns:
+                    series = raw[ticker]
+                else:
+                    series = pd.Series(dtype=float)
+                if not series.empty:
+                    val = series.iloc[0]
+                    if pd.notna(val):
+                        spot = float(val)
+        except Exception:
+            spot = None
+
+        # Fallback bdp si besoin
+        if spot is None or (isinstance(spot, float) and np.isnan(spot)):
+            try:
+                bdp_res = blp.bdp(ticker, flds=["PX_LAST"])
+                if "PX_LAST" in bdp_res.columns:
+                    val = bdp_res.loc[0, "PX_LAST"]
+                    if pd.notna(val):
+                        spot = float(val)
+                elif ticker in bdp_res.columns:
+                    val = bdp_res.loc[0, ticker]
+                    if pd.notna(val):
+                        spot = float(val)
+            except Exception:
+                spot = None
+
+        if spot is None:
+            spot = np.nan
+
+        # Appliquer multiplicateur
+        adjusted = spot * row["multiplier"] if not pd.isna(spot) else np.nan
+        spots.append(adjusted)
+
+    return spots
+
+
+
+
+
+
+
+import pandas as pd
+import numpy as np
 from datetime import timedelta
 import matplotlib.pyplot as plt
 import statsmodels.api as sm
