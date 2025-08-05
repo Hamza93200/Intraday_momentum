@@ -1,3 +1,256 @@
+import dash
+from dash import dcc, html, Input, Output, State, callback
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+from datetime import datetime, timedelta
+import re
+
+# Initialize the Dash app
+app = dash.Dash(__name__)
+
+# Sample indices - replace with your actual indices
+AVAILABLE_INDICES = [
+    'USD_SOFR', 'EUR_ESTR', 'GBP_SONIA', 'JPY_TONAR',
+    'CAD_CORRA', 'AUD_AONIA', 'CHF_SARON', 'SEK_SWESTR'
+]
+
+# Placeholder function - replace with your actual function
+def your_repo_function(indices_list, dates_list, start_date):
+    """
+    Placeholder for your actual repo curve function.
+    Replace this with your real function that returns a DataFrame.
+    
+    Parameters:
+    - indices_list: list of selected indices
+    - dates_list: list of maturity dates
+    - start_date: start date for the analysis
+    
+    Returns:
+    - DataFrame with curves for each index and maturity
+    """
+    # This is a mock implementation - replace with your actual code
+    import numpy as np
+    
+    data = []
+    for idx in indices_list:
+        for date in dates_list:
+            # Generate sample curve data
+            x_values = np.linspace(0, 365, 100)  # Days
+            y_values = np.random.normal(0.02, 0.005, 100) + np.random.random() * 0.01
+            
+            for i, (x, y) in enumerate(zip(x_values, y_values)):
+                data.append({
+                    'Index': idx,
+                    'Maturity': str(date),
+                    'Days': x,
+                    'Rate': y,
+                    'Curve_ID': f"{idx}_{date}"
+                })
+    
+    return pd.DataFrame(data)
+
+def parse_maturity_input(input_text):
+    """
+    Parse maturity input and convert to list of dates or months.
+    Supports:
+    - Dates in YYYY-MM-DD format
+    - Integers (months)
+    - Comma-separated values
+    """
+    if not input_text.strip():
+        return []
+    
+    items = [item.strip() for item in input_text.split(',')]
+    parsed_items = []
+    
+    for item in items:
+        if not item:
+            continue
+            
+        # Try to parse as date (YYYY-MM-DD)
+        try:
+            parsed_date = datetime.strptime(item, '%Y-%m-%d').date()
+            parsed_items.append(parsed_date)
+        except ValueError:
+            # Try to parse as integer (months)
+            try:
+                months = int(item)
+                parsed_items.append(months)
+            except ValueError:
+                # Skip invalid entries
+                continue
+    
+    return parsed_items
+
+# Define the app layout
+app.layout = html.Div([
+    html.H1("Repo Curve Visualization", 
+            style={'textAlign': 'center', 'marginBottom': 30}),
+    
+    html.Div([
+        # Index selection
+        html.Div([
+            html.Label("Select Indices:", 
+                      style={'fontWeight': 'bold', 'marginBottom': 10}),
+            dcc.Dropdown(
+                id='index-dropdown',
+                options=[{'label': idx, 'value': idx} for idx in AVAILABLE_INDICES],
+                value=[AVAILABLE_INDICES[0]],  # Default selection
+                multi=True,
+                placeholder="Select one or more indices..."
+            )
+        ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+        
+        # Start date input
+        html.Div([
+            html.Label("Start Date:", 
+                      style={'fontWeight': 'bold', 'marginBottom': 10}),
+            dcc.DatePickerSingle(
+                id='start-date-picker',
+                date=datetime.now().date(),
+                display_format='YYYY-MM-DD'
+            )
+        ], style={'width': '48%', 'float': 'right', 'display': 'inline-block'})
+    ], style={'marginBottom': 20}),
+    
+    # Maturity input
+    html.Div([
+        html.Label("Maturities (comma-separated):", 
+                  style={'fontWeight': 'bold', 'marginBottom': 10}),
+        html.Br(),
+        html.Small("Enter dates (YYYY-MM-DD) or months (integers), separated by commas. Example: 2024-12-31, 6, 2025-06-15, 12"),
+        dcc.Textarea(
+            id='maturity-input',
+            value='3, 6, 12, 2024-12-31',  # Default values
+            placeholder='Enter maturities: 3, 6, 12, 2024-12-31, 24...',
+            style={'width': '100%', 'height': 60, 'marginTop': 5}
+        )
+    ], style={'marginBottom': 20}),
+    
+    # Run button
+    html.Div([
+        html.Button('Generate Curves', 
+                   id='run-button', 
+                   n_clicks=0,
+                   style={
+                       'backgroundColor': '#007bff',
+                       'color': 'white',
+                       'padding': '10px 20px',
+                       'border': 'none',
+                       'borderRadius': '5px',
+                       'cursor': 'pointer',
+                       'fontSize': '16px'
+                   })
+    ], style={'textAlign': 'center', 'marginBottom': 30}),
+    
+    # Status message
+    html.Div(id='status-message', style={'marginBottom': 20}),
+    
+    # Plot
+    dcc.Graph(id='repo-curves-plot', style={'height': '600px'})
+    
+], style={'padding': '20px', 'maxWidth': '1200px', 'margin': '0 auto'})
+
+# Callback for updating the plot
+@app.callback(
+    [Output('repo-curves-plot', 'figure'),
+     Output('status-message', 'children')],
+    [Input('run-button', 'n_clicks')],
+    [State('index-dropdown', 'value'),
+     State('maturity-input', 'value'),
+     State('start-date-picker', 'date')]
+)
+def update_plot(n_clicks, selected_indices, maturity_input, start_date):
+    if n_clicks == 0:
+        # Initial empty plot
+        fig = go.Figure()
+        fig.update_layout(
+            title="Select parameters and click 'Generate Curves' to view the repo curves",
+            xaxis_title="Days",
+            yaxis_title="Rate",
+            template="plotly_white"
+        )
+        return fig, ""
+    
+    # Validate inputs
+    if not selected_indices:
+        error_msg = html.Div("Please select at least one index.", 
+                           style={'color': 'red', 'textAlign': 'center'})
+        return go.Figure(), error_msg
+    
+    # Parse maturity input
+    parsed_maturities = parse_maturity_input(maturity_input)
+    if not parsed_maturities:
+        error_msg = html.Div("Please enter valid maturities (dates in YYYY-MM-DD format or integers for months).", 
+                           style={'color': 'red', 'textAlign': 'center'})
+        return go.Figure(), error_msg
+    
+    try:
+        # Convert start_date string to date object if needed
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        
+        # Call your function
+        df = your_repo_function(selected_indices, parsed_maturities, start_date)
+        
+        # Create the plot
+        fig = go.Figure()
+        
+        # Generate colors for different curves
+        colors = px.colors.qualitative.Set1
+        color_idx = 0
+        
+        # Plot each curve
+        for curve_id in df['Curve_ID'].unique():
+            curve_data = df[df['Curve_ID'] == curve_id]
+            
+            fig.add_trace(go.Scatter(
+                x=curve_data['Days'],
+                y=curve_data['Rate'],
+                mode='lines',
+                name=curve_id,
+                line=dict(color=colors[color_idx % len(colors)], width=2)
+            ))
+            color_idx += 1
+        
+        # Update layout
+        fig.update_layout(
+            title=f"Repo Curves - Start Date: {start_date}",
+            xaxis_title="Days",
+            yaxis_title="Rate",
+            template="plotly_white",
+            hovermode='x unified',
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=1.01
+            )
+        )
+        
+        success_msg = html.Div(
+            f"Successfully generated curves for {len(selected_indices)} indices and {len(parsed_maturities)} maturities.",
+            style={'color': 'green', 'textAlign': 'center'}
+        )
+        
+        return fig, success_msg
+        
+    except Exception as e:
+        error_msg = html.Div(
+            f"Error generating curves: {str(e)}",
+            style={'color': 'red', 'textAlign': 'center'}
+        )
+        return go.Figure(), error_msg
+
+# Run the app
+if __name__ == '__main__':
+    app.run_server(debug=True)
+
+
+
+
+
 
 import pandas as pd
 import numpy as np
