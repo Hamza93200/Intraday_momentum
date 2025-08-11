@@ -1,3 +1,17 @@
+High US–Japan interest rate differential → BoJ still dovish, Fed holding rates high → carry trades boosting USD/JPY and indirectly USD/CAD.
+	•	Stronger USD across the board → Broad USD moves pushing both pairs in the same direction.
+	•	Global risk sentiment alignment → Yen weakens when risk appetite is strong, CAD weakens when commodities or global growth outlook drops—both linked to risk cycles.
+	•	Oil price weakness → Lower oil prices since February weakened CAD; global slowdown fears also pressured JPY, aligning their moves.
+	•	Commodity & macro shocks → Events like China growth concerns hit both CAD (via trade & oil) and JPY (via safe-haven outflows)
+
+
+BoJ intervention risk → If yen weakness continues, Tokyo could verbally or physically intervene, breaking alignment with CAD.
+	•	Oil price rebound → CAD could strengthen if oil rises, diverging from JPY moves.
+	•	Fed rate cut speculation → Any dovish pivot from the Fed might weaken USD across pairs, but not necessarily equally.
+	•	Canada-specific data shocks → CPI or GDP surprises in Canada could move CAD independently.
+	•	Japan domestic shifts → Wage data or inflation surprises could push BoJ toward tightening earlier than expected, decoupling USD/JPY from USD/CAD.
+
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
